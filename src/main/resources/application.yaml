@@ -1,0 +1,22 @@
+kafka:
+  bootstrap:
+    servers: localhost:9092
+  security:
+    protocol: SASL_SSL
+  sasl:
+    mechanism: SCRAM-SHA-256
+    jaas:
+      config: org.apache.kafka.common.security.scram.ScramLoginModule required username=admin password=pwd;
+mp:
+  messaging:
+    outgoing:
+      messages:
+        connector: smallrye-kafka
+        value:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+quarkus:
+  kafka:
+    devservices:
+      enabled: false
+#  ssl:
+#    native: true
