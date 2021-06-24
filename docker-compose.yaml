@@ -1,25 +1,69 @@
-version: '2'
+version: "3.9"
+
 services:
   zookeeper:
-    image: wurstmeister/zookeeper
-    ports:
-      - "2181:2181"
+    image: confluentinc/cp-zookeeper:6.2.0
+    hostname: zookeeper
+    container_name: zookeeper
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://zookeeper:2181
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/sasl/zookeeper_jaas.conf \
+          -Dzookeeper.authProvider.1=org.apache.zookeeper.server.auth.SASLAuthenticationProvider \
+          -Dzookeeper.authProvider.2=org.apache.zookeeper.server.auth.DigestAuthenticationProvider \
+          -Dquorum.auth.enableSasl=true \
+          -Dquorum.auth.learnerRequireSasl=true \
+          -Dquorum.auth.serverRequireSasl=true \
+          -Dquorum.auth.learner.saslLoginContext=QuorumLearner \
+          -Dquorum.auth.server.saslLoginContext=QuorumServer \
+          -Dquorum.cnxn.threads.size=20 \
+          -DrequireClientAuthScheme=sasl"
+    volumes:
+      - type: bind
+        source: ./sasl
+        target: /etc/kafka/secrets/sasl
+  zookeeper-add-kafka-users:
+    image: confluentinc/cp-kafka:5.4.3
+    container_name: "zookeeper-add-kafka-users"
+    depends_on:
+      - zookeeper
+    command: "bash -c 'echo Waiting for Zookeeper to be ready... && \
+                          cub zk-ready zookeeper:2181 120 && \
+                          kafka-configs --zookeeper zookeeper:2181 --alter --add-config 'SCRAM-SHA-256=[iterations=4096,password=password]' --entity-type users --entity-name admin && \
+                          kafka-configs --zookeeper zookeeper:2181 --alter --add-config 'SCRAM-SHA-256=[iterations=4096,password=password]' --entity-type users --entity-name client '"
+    environment:
+      KAFKA_BROKER_ID: ignored
+      KAFKA_ZOOKEEPER_CONNECT: ignored
+      KAFKA_OPTS: -Djava.security.auth.login.config=/etc/kafka/secrets/sasl/kafka_server_jaas.conf
+    volumes:
+      - type: bind
+        source: ./sasl
+        target: /etc/kafka/secrets/sasl
   kafka:
-    image: wurstmeister/kafka
+    image: confluentinc/cp-kafka:5.4.3
+    hostname: kafka
+    container_name: kafka
+    depends_on:
+      - zookeeper
     ports:
       - "9092:9092"
+      - "29092:29092"
+    expose:
+      - "29090"
     environment:
-      KAFKA_ADVERTISED_LISTENERS: SASL_PLAINTEXT://localhost:9092,PLAINTEXT://localhost:29092
-      KAFKA_LISTENERS: SASL_PLAINTEXT://0.0.0.0:9092,PLAINTEXT://localhost:29092
-      KAFKA_CREATE_TOPICS: "test:1:1"
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SASL_PLAINTEXT:SASL_PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_OPTS: "-Dzookeeper.sasl.client=true -Djava.security.auth.login.config=/etc/kafka/secrets/sasl/kafka_server_jaas.conf"
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT,SASL_PLAINHOST:SASL_PLAINTEXT
+      KAFKA_LISTENERS: INSIDE://:29090,OUTSIDE://:29092,SASL_PLAINHOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka:29090,OUTSIDE://localhost:29092,SASL_PLAINHOST://localhost:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_SECURITY_INTER_BROKER_PROTOCAL: SASL_PLAINTEXT
       KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-256
-      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: SCRAM-SHA-256
-      KAFKA_OPTS: -Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf
-#      KAFKA_INTER_BROKER_LISTENER_NAME: SASL_PLAINTEXT
-      KAFKA_SECURITY_INTER_BROKER_PROTOCOL: PLAINTEXT
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAINTEXT
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./kafka_server_jaas.conf:/etc/kafka/kafka_server_jaas.conf
+      - type: bind
+        source: ./sasl
+        target: /etc/kafka/secrets/sasl
